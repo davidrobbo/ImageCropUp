@@ -1,24 +1,65 @@
 <template>
-    <div :id="'dropzone-' + _uid" class="drop-zone dz-clickable" data-upload-path="/api/admin/crop" data-image-previews="id">
-        <div class="dz-message">Click here to upload images to the gallery...</div>
+    <div>
+        <div :id="'dropzone-' + _uid" class="drop-zone dz-clickable" data-upload-path="/api/admin/crop" data-image-previews="id">
+            <div class="dz-message">Click here to upload images to the gallery...</div>
+        </div>
+        <div class="crop" v-if="cropperActive" :id="'cropper-' + _uid">
+            <div class="image-container">
+                <img src="images/img-placeholder.png" alt="Cropbox" :id="'cropbox-' + _uid">
+                <div class="button-holder">
+                    <button type="button" class="m5 btn btn-accent crop-upload" @click="crop"><i class="fa fa-crop"></i></button>
+                    <button class="m5 btn btn-primary" @click="rotate(45)"><i class="fa fa-rotate-right"></i></button>
+                    <button class="m5 btn btn-primary" @click="rotate(-45)"><i class="fa fa-rotate-left"></i></button>
+                    <button class="m5 btn btn-primary" @click="scaleX(-1)"><i class="fa fa-arrow-left"></i></button>
+                    <button class="m5 btn btn-primary" @click="scaleX(1)"><i class="fa fa-arrow-right"></i></button>
+                    <button class="m5 btn btn-primary" @click="scaleY(-1)"><i class="fa fa-arrow-up"></i></button>
+                    <button class="m5 btn btn-primary" @click="scaleY(1)"><i class="fa fa-arrow-down"></i></button>
+                </div>
+            </div>
+        </div>
     </div>
 </template>
 <style>
     body{
         background-color:#ff0000;
     }
+    .crop {
+        position: relative;
+    }
+    .button-holder {
+        position: absolute;
+        top: 5%;
+        right: 5%;
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        align-items: center;,
+        background-color: #ECF0F5;
+        padding: 10px;
+    }
+    .m5 {
+        margin-bottom: 5px;
+    }
 </style>
 <script>
-    import event from '../../../event.js'
+    import event from '../../event.js'
     import Cropper from 'cropperjs'
     import Dropzone from 'dropzone'
     export default{
+        name: "ImageCropper",
         data(){
             return{
-                msg:'hello vue'
+                msg:'hello vue',
+                myDropzone: null,
+                cropperTool: null,
+                cropperActive: false,
+                ratio: 1,
+                url: "/api/admin/crop",
+                token: document.getElementsByName("_token")[0].value,
+                cachedFilename: ""
             }
         },
-        props: ['parentId'],
+        props: ['parentId', 'index', 'aspectRatio'],
         components:{
         },
         methods: {
@@ -30,18 +71,35 @@
                     ia[i] = byteString.charCodeAt(i);
                 }
                 return new Blob([ab], { type: 'image/jpeg' });
+            },
+            rotate(n){
+                this.cropperTool.rotate(n)
+            },
+            scaleX(a){
+                this.cropperTool.scaleX(a)
+            },
+            scaleY(a){
+                this.cropperTool.scaleY(a)
+            },
+            crop(){
+                var blob = this.cropperTool.getCroppedCanvas().toDataURL();
+                var newFile = this.dataURItoBlob(blob);
+                newFile.cropped = true;
+                newFile.name = this.cachedFilename;
+                this.myDropzone.addFile(newFile);
+                this.myDropzone.processQueue();
+                this.cropperActive = false
             }
-
         },
         mounted(){
-            const self = this
-            $("#dropzone-" + this._uid).each(function(){
-                var $dzContainer = $(this);
-                var targetId = $dzContainer.data("image-previews");
-                var myDropzone =  new Dropzone($(this)[0], {
-                    url: $(this).data('upload-path'),
+            this.$nextTick( () => {
+                this.ratio = this.aspectRatio ? this.aspectRatio : this.ratio
+                const self = this
+                var $dzContainer = self.$el.querySelector("#dropzone-" + self._uid)
+                self.myDropzone =  new Dropzone(self.$el.querySelector("#dropzone-" + self._uid), {
+                    url: self.url,
                     uploadMultiple: false,
-                    headers: { "X-CSRF-TOKEN": $("[name='_token']").val() },
+                    headers: { "X-CSRF-TOKEN": self.token },
                     clickable: true,
                     acceptedFiles: "image/*",
                     success: function (file, response)
@@ -49,65 +107,57 @@
                         if ( file.status == 'success' )
                         {
                             var $file = $(file.previewElement);
-                            event.$emit('cropped-image-uploaded', {
-                                parentId: self.parentId,
-                                file: response.image
-                            })
+                            try {
+                                event.$emit('cropped-image-uploaded', {
+                                    parentId: self.parentId,
+                                    index: self.index,
+                                    file: response.image
+                                })
+                            } catch (e) {
+                                self.$emit('cropped-image-uploaded', {
+                                    parentId: self.parentId,
+                                    index: self.index,
+                                    file: response.image
+                                })
+                            }
                             $file.addClass('dz-success').delay(1000).fadeOut(400, function () {
                                 $file.remove().promise().done(function ()
                                 {
-                                    if ( $dzContainer.find('.dz-preview').length == 0 )
+                                    if ( !$dzContainer.querySelector('.dz-preview') )
                                     {
-                                        $dzContainer.removeClass('dz-started');
+                                        $dzContainer.classList.remove('dz-started');
                                     }
                                 });
                             });
                         }
                     }
                 });
-                var modalTemplate =
-                                '<div class="crop">'+
-                                    '<div class="image-container">'+
-                                        '<img src="images/img-placeholder.png" alt="Cropbox" id="cropbox">' +
-                                    '</div>'+
-                                    '<button type="button" class="btn btn-accent crop-upload">Crop</button>'+
-                                '</div>'
-
-                myDropzone.on('thumbnail', function (file) {
+                self.myDropzone.on('thumbnail', function (file) {
                     if (file.cropped) {
                         return;
                     }
-                    var cachedFilename = file.name;
-                    myDropzone.removeFile(file);
-                    var $cropperModal = $(modalTemplate);
-                    var $uploadCrop = $cropperModal.find('.crop-upload');
-                    var $img = $('<img />');
+                    self.cachedFilename = file.name;
+                    self.myDropzone.removeFile(file);
                     var reader = new FileReader();
-                    var cropperTool;
                     reader.onloadend = function () {
-                        $cropperModal.find('.image-container').html($img);
-                        $img.attr('src', reader.result);
-                        cropperTool = new Cropper($($img)[0], {
-                            aspectRatio: 1/1,
+                        self.$el.querySelector("#cropbox-" + self._uid).setAttribute('src', reader.result);
+                        self.cropperTool = new Cropper(self.$el.querySelector("#cropbox-" + self._uid), {
+                            aspectRatio: self.ratio,
                             autoCropArea: 1,
                             movable: false,
                             cropBoxResizable: true,
-                            minContainerWidth: 850
+                            minContainerWidth: 850,
+                            rotatable: true,
+                            scalable: true
                         });
                     };
                     reader.readAsDataURL(file);
-                    $cropperModal.insertAfter("#dropzone-" + self._uid);
-                    $uploadCrop.on('click', function() {
-                        var blob = cropperTool.getCroppedCanvas().toDataURL();
-                        var newFile = self.dataURItoBlob(blob);
-                        newFile.cropped = true;
-                        newFile.name = cachedFilename;
-                        myDropzone.addFile(newFile);
-                        myDropzone.processQueue();
-                        $cropperModal.remove();
-                    });
+                    self.cropperActive = true
                 });
-            });
+            })
+        },
+        beforeDestroy(){
+            this.myDropzone.destroy()
         }
     }
 </script>
